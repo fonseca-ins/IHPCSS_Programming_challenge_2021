@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
 	double temperatures_last[ROWS_PER_MPI_PROCESS+2][COLUMNS_PER_MPI_PROCESS];
 	/// On master process only: contains all temperatures read from input file.
 	double all_temperatures[ROWS][COLUMNS];
-	/// The last snapshot made
+	/// The last snapshot made JF: Moved this here so I can pass it to 'acc data create()' below
 	double snapshot[ROWS][COLUMNS];
 
 	// The master MPI process will read a chunk from the file, send it to the corresponding MPI process and repeat until all chunks are read.
@@ -90,7 +90,7 @@ int main(int argc, char* argv[])
 	double total_time_so_far = 0.0;
 	double start_time = MPI_Wtime();
 
-
+	// JF: I let this part to take place in de host
 	if(my_rank == MASTER_PROCESS_RANK)
 	{
 		for(int i = 0; i < comm_size; i++)
@@ -121,6 +121,8 @@ int main(int argc, char* argv[])
 	}
 
 	// Copy the temperatures into the current iteration temperature as well
+	// JF: This will be computed in the device, so we need to fetch
+	// some values from the host
 	#pragma acc update device(temperatures_last)
 	#pragma acc kernels
 	for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
@@ -156,7 +158,7 @@ int main(int argc, char* argv[])
 		// -- SUBTASK 1: EXCHANGE GHOST CELLS -- //
 		// ////////////////////////////////////////
 		
-
+		//JF: Copy halo strips from device to update them using MPI
 		#pragma acc update host(temperatures[1:1][1:COLUMNS_PER_MPI_PROCESS], temperatures[ROWS_PER_MPI_PROCESS:1][1:COLUMNS_PER_MPI_PROCESS])
 
 		// Send data to up neighbour for its ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Ssend will do nothing.
@@ -171,11 +173,14 @@ int main(int argc, char* argv[])
 		// Receive data from up neighbour to fill our ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Recv will do nothing.
 		MPI_Recv(&temperatures_last[0][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+		//JF: copy back updated halos to device
 		#pragma acc update device(temperatures_last[0:1][1:COLUMNS_PER_MPI_PROCESS], temperatures_last[ROWS_PER_MPI_PROCESS+1:1][1:COLUMNS_PER_MPI_PROCESS])
 
 		/////////////////////////////////////////////
 		// -- SUBTASK 2: PROPAGATE TEMPERATURES -- //
 		/////////////////////////////////////////////
+
+		//JF: Main computation offloaded to device
 		#pragma acc kernels
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
@@ -209,6 +214,8 @@ int main(int argc, char* argv[])
 		///////////////////////////////////////////////////////
 		// -- SUBTASK 3: CALCULATE MAX TEMPERATURE CHANGE -- //
 		///////////////////////////////////////////////////////
+
+		//JF: search max temp. change in the device, use reduction explicitly 
 		my_temperature_change = 0.0;
 		#pragma acc parallel loop reduction(max:my_temperature_change)
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
@@ -223,6 +230,8 @@ int main(int argc, char* argv[])
 		//////////////////////////////////////////////////////////
 		// -- SUBTASK 4: FIND MAX TEMPERATURE CHANGE OVERALL -- //
 		//////////////////////////////////////////////////////////
+
+		// JF: Let this step take place in the host
 		if(my_rank != MASTER_PROCESS_RANK)
 		{
 			// Send my temperature delta to the master MPI process
@@ -264,6 +273,7 @@ int main(int argc, char* argv[])
 		// -- SUBTASK 5: UPDATE LAST ITERATION ARRAY -- //
 		//////////////////////////////////////////////////
 		
+		// JF: Update offloaded to device
 		#pragma acc kernels
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
@@ -294,7 +304,7 @@ int main(int argc, char* argv[])
 								snapshot[j * ROWS_PER_MPI_PROCESS + k][l] = temperatures[k + 1][l];
 							}
 						}
-						// this part of snapshot was updated in the device
+						// JF: this part of snapshot was updated in the device
 						#pragma acc update host(snapshot[j * ROWS_PER_MPI_PROCESS:ROWS_PER_MPI_PROCESS][0:COLUMNS_PER_MPI_PROCESS])
 					}
 					else
@@ -307,6 +317,7 @@ int main(int argc, char* argv[])
 			}
 			else
 			{
+				// JF: update temperatures in the host before calling MPI
 				#pragma acc update host(temperatures)
 				// Send my array to the master MPI process
 				MPI_Ssend(&temperatures[1][0], ROWS_PER_MPI_PROCESS * COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, MASTER_PROCESS_RANK, 0, MPI_COMM_WORLD); 
