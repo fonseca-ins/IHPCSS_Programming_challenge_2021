@@ -62,6 +62,8 @@ int main(int argc, char* argv[])
 	double temperatures_last[ROWS_PER_MPI_PROCESS+2][COLUMNS_PER_MPI_PROCESS];
 	/// On master process only: contains all temperatures read from input file.
 	double all_temperatures[ROWS][COLUMNS];
+	/// The last snapshot made
+	double snapshot[ROWS][COLUMNS];
 
 	// The master MPI process will read a chunk from the file, send it to the corresponding MPI process and repeat until all chunks are read.
 	if(my_rank == MASTER_PROCESS_RANK)
@@ -78,7 +80,10 @@ int main(int argc, char* argv[])
 	//  /  o  \                              //
 	// /_______\                             //
 	///////////////////////////////////////////
-	
+
+		
+	#pragma acc data create(temperatures, temperatures_last, snapshot)
+	{
 	////////////////////////////////////////////////////////
 	// -- TASK 1: DISTRIBUTE DATA TO ALL MPI PROCESSES -- //
 	////////////////////////////////////////////////////////
@@ -116,6 +121,7 @@ int main(int argc, char* argv[])
 	}
 
 	// Copy the temperatures into the current iteration temperature as well
+	#pragma acc update device(temperatures_last)
 	#pragma acc kernels
 	for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 	{
@@ -141,10 +147,7 @@ int main(int argc, char* argv[])
 	double global_temperature_change;
 	/// Maximum temperature change for us
 	double my_temperature_change; 
-	/// The last snapshot made
-	double snapshot[ROWS][COLUMNS];
 
-	#pragma acc data copyin(temperatures), copyin(temperatures_last)
 	while(total_time_so_far < MAX_TIME)
 	{
 		my_temperature_change = 0.0;
@@ -207,10 +210,10 @@ int main(int argc, char* argv[])
 		// -- SUBTASK 3: CALCULATE MAX TEMPERATURE CHANGE -- //
 		///////////////////////////////////////////////////////
 		my_temperature_change = 0.0;
-		
-		#pragma acc kernels
+		#pragma acc parallel loop reduction(max:my_temperature_change)
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
+			#pragma acc loop reduction(max:my_temperature_change)
 			for(int j = 0; j < COLUMNS_PER_MPI_PROCESS; j++)
 			{
 				my_temperature_change = fmax(fabs(temperatures[i][j] - temperatures_last[i][j]), my_temperature_change);
@@ -275,13 +278,14 @@ int main(int argc, char* argv[])
 		///////////////////////////////////
 		if(iteration_count % SNAPSHOT_INTERVAL == 0)
 		{
-			#pragma acc update host(temperatures)
+			
 			if(my_rank == MASTER_PROCESS_RANK)
 			{
 				for(int j = 0; j < comm_size; j++)
 				{
 					if(j == my_rank)
 					{
+						#pragma acc kernels
 						// Copy locally my own temperature array in the global one
 						for(int k = 0; k < ROWS_PER_MPI_PROCESS; k++)
 						{
@@ -290,6 +294,8 @@ int main(int argc, char* argv[])
 								snapshot[j * ROWS_PER_MPI_PROCESS + k][l] = temperatures[k + 1][l];
 							}
 						}
+						// this part of snapshot was updated in the device
+						#pragma acc update host(snapshot[j * ROWS_PER_MPI_PROCESS:ROWS_PER_MPI_PROCESS][0:COLUMNS_PER_MPI_PROCESS])
 					}
 					else
 					{
@@ -301,6 +307,7 @@ int main(int argc, char* argv[])
 			}
 			else
 			{
+				#pragma acc update host(temperatures)
 				// Send my array to the master MPI process
 				MPI_Ssend(&temperatures[1][0], ROWS_PER_MPI_PROCESS * COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, MASTER_PROCESS_RANK, 0, MPI_COMM_WORLD); 
 			}
@@ -318,7 +325,6 @@ int main(int argc, char* argv[])
 		// Update the iteration number
 		iteration_count++;
 	}
-
 	///////////////////////////////////////////////
 	//     ^                                     //
 	//    / \                                    //
@@ -334,6 +340,8 @@ int main(int argc, char* argv[])
 	{
 		printf("The program took %.2f seconds in total and executed %d iterations.\n", total_time_so_far, iteration_count);
 	}
+	
+	} // END OF DATA REGION: #pragma acc data create(temperatures, temperatures_last, snapshot)
 
 	MPI_Finalize();
 
