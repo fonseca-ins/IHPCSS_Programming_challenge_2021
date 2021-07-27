@@ -121,18 +121,20 @@ reference_iteration_achieved=`cat ${reference_file} | grep "iterations" | cut -d
 
 iterations_to_verify_string=`cat $4 | grep "Iteration" | cut -d ' ' -f 3`;
 iterations_to_verify=($iterations_to_verify_string)
+if [ ! "${iterations_to_verify_string}" ]; then
+	echo_failure "No iteration found in your file \"${reference_file}\"."
+fi
 iterations_to_verify_count=${#reference_iterations[@]}
 iterations_to_verify_achieved=`cat $4 | grep "iterations" | cut -d ' ' -f 10`;
 
 iteration=0
 for i in ${!iterations_to_verify[@]}; do
-	let iteration_index="$i * 25";
-	if [ ${iteration_index} -gt ${reference_iterations_count} ]; then
+	if [ ${i} -gt ${reference_iterations_count} ]; then
 		echo_success "Your version ran more iterations than the reference; keep in mind that the extra iterations your program has run could not be checked against the reference. Please inform the programming challenge organiser to provide longer reference files."
 		break;
 	fi
 	if [ ! "${reference_iterations[$i]}" = "${iterations_to_verify[$i]}" ]; then
-		echo_failure "Iteration $i differs: ${reference_iterations[$i]} (reference) vs ${iterations_to_verify[$i]} (you)";
+		echo_failure "Iteration ${iteration} differs: ${reference_iterations[$i]} (reference) vs ${iterations_to_verify[$i]} (you)";
 	fi
 	let iteration="${iteration} + 25";
 done
