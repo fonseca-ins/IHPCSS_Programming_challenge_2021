@@ -152,7 +152,7 @@ int main(int argc, char* argv[])
 
 	while(total_time_so_far < MAX_TIME)
 	{
-		my_temperature_change = 0.0;
+		//my_temperature_change = 0.0;
 
 		// ////////////////////////////////////////
 		// -- SUBTASK 1: EXCHANGE GHOST CELLS -- //
@@ -162,13 +162,13 @@ int main(int argc, char* argv[])
 		#pragma acc update host(temperatures[1:1][1:COLUMNS_PER_MPI_PROCESS], temperatures[ROWS_PER_MPI_PROCESS:1][1:COLUMNS_PER_MPI_PROCESS])
 
 		// Send data to up neighbour for its ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Ssend will do nothing.
-		MPI_Ssend(&temperatures[1][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, 0, MPI_COMM_WORLD);
+		MPI_Send(&temperatures[1][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, 0, MPI_COMM_WORLD);
 
 		// Receive data from down neighbour to fill our ghost cells. If my down_neighbour_rank is MPI_PROC_NULL, this MPI_Recv will do nothing.
 		MPI_Recv(&temperatures_last[ROWS_PER_MPI_PROCESS+1][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, down_neighbour_rank, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
 		// Send data to down neighbour for its ghost cells. If my down_neighbour_rank is MPI_PROC_NULL, this MPI_Ssend will do nothing.
-		MPI_Ssend(&temperatures[ROWS_PER_MPI_PROCESS][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, down_neighbour_rank, 0, MPI_COMM_WORLD);
+		MPI_Send(&temperatures[ROWS_PER_MPI_PROCESS][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, down_neighbour_rank, 0, MPI_COMM_WORLD);
 
 		// Receive data from up neighbour to fill our ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Recv will do nothing.
 		MPI_Recv(&temperatures_last[0][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -231,7 +231,9 @@ int main(int argc, char* argv[])
 		// -- SUBTASK 4: FIND MAX TEMPERATURE CHANGE OVERALL -- //
 		//////////////////////////////////////////////////////////
 
-		// JF: Let this step take place in the host
+		// JF: Let this step take place in the host and rely on MPI's allreduce instead doing it manually
+		MPI_Allreduce(&my_temperature_change, &global_temperature_change, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+#if 0
 		if(my_rank != MASTER_PROCESS_RANK)
 		{
 			// Send my temperature delta to the master MPI process
@@ -268,7 +270,7 @@ int main(int argc, char* argv[])
 				}
 			}
 		}
-
+#endif
 		//////////////////////////////////////////////////
 		// -- SUBTASK 5: UPDATE LAST ITERATION ARRAY -- //
 		//////////////////////////////////////////////////
@@ -288,7 +290,6 @@ int main(int argc, char* argv[])
 		///////////////////////////////////
 		if(iteration_count % SNAPSHOT_INTERVAL == 0)
 		{
-			
 			if(my_rank == MASTER_PROCESS_RANK)
 			{
 				for(int j = 0; j < comm_size; j++)
