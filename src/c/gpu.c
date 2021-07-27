@@ -85,6 +85,7 @@ int main(int argc, char* argv[])
 	double total_time_so_far = 0.0;
 	double start_time = MPI_Wtime();
 
+
 	if(my_rank == MASTER_PROCESS_RANK)
 	{
 		for(int i = 0; i < comm_size; i++)
@@ -115,6 +116,7 @@ int main(int argc, char* argv[])
 	}
 
 	// Copy the temperatures into the current iteration temperature as well
+	#pragma acc kernels
 	for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 	{
 		for(int j = 0; j < COLUMNS_PER_MPI_PROCESS; j++)
@@ -142,6 +144,7 @@ int main(int argc, char* argv[])
 	/// The last snapshot made
 	double snapshot[ROWS][COLUMNS];
 
+	#pragma acc data copyin(temperatures), copyin(temperatures_last)
 	while(total_time_so_far < MAX_TIME)
 	{
 		my_temperature_change = 0.0;
@@ -149,6 +152,9 @@ int main(int argc, char* argv[])
 		// ////////////////////////////////////////
 		// -- SUBTASK 1: EXCHANGE GHOST CELLS -- //
 		// ////////////////////////////////////////
+		
+
+		#pragma acc update host(temperatures[1:1][1:COLUMNS_PER_MPI_PROCESS], temperatures[ROWS_PER_MPI_PROCESS:1][1:COLUMNS_PER_MPI_PROCESS])
 
 		// Send data to up neighbour for its ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Ssend will do nothing.
 		MPI_Ssend(&temperatures[1][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, 0, MPI_COMM_WORLD);
@@ -162,9 +168,12 @@ int main(int argc, char* argv[])
 		// Receive data from up neighbour to fill our ghost cells. If my up_neighbour_rank is MPI_PROC_NULL, this MPI_Recv will do nothing.
 		MPI_Recv(&temperatures_last[0][0], COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, up_neighbour_rank, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+		#pragma acc update device(temperatures_last[0:1][1:COLUMNS_PER_MPI_PROCESS], temperatures_last[ROWS_PER_MPI_PROCESS+1:1][1:COLUMNS_PER_MPI_PROCESS])
+
 		/////////////////////////////////////////////
 		// -- SUBTASK 2: PROPAGATE TEMPERATURES -- //
 		/////////////////////////////////////////////
+		#pragma acc kernels
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
 			// Process the cell at the first column, which has no left neighbour
@@ -198,6 +207,8 @@ int main(int argc, char* argv[])
 		// -- SUBTASK 3: CALCULATE MAX TEMPERATURE CHANGE -- //
 		///////////////////////////////////////////////////////
 		my_temperature_change = 0.0;
+		
+		#pragma acc kernels
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
 			for(int j = 0; j < COLUMNS_PER_MPI_PROCESS; j++)
@@ -249,6 +260,8 @@ int main(int argc, char* argv[])
 		//////////////////////////////////////////////////
 		// -- SUBTASK 5: UPDATE LAST ITERATION ARRAY -- //
 		//////////////////////////////////////////////////
+		
+		#pragma acc kernels
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
 			for(int j = 0; j < COLUMNS_PER_MPI_PROCESS; j++)
@@ -262,6 +275,7 @@ int main(int argc, char* argv[])
 		///////////////////////////////////
 		if(iteration_count % SNAPSHOT_INTERVAL == 0)
 		{
+			#pragma acc update host(temperatures)
 			if(my_rank == MASTER_PROCESS_RANK)
 			{
 				for(int j = 0; j < comm_size; j++)
