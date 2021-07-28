@@ -201,7 +201,7 @@ int main(int argc, char* argv[])
 
 		// JF: Put this calculation in separate loop so the compiler collapses it, additionally it may be 
 		// executed asynchronously with the updates in the first and last column
-		#pragma acc kernels async(2)
+		#pragma acc kernels loop independent async(2)
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
 			// Process all cells between the first and last columns excluded, which each has both left and right neighbours
@@ -234,51 +234,14 @@ int main(int argc, char* argv[])
 				my_temperature_change = fmax(fabs(temperatures[i][j] - temperatures_last[i][j]), my_temperature_change);
 			}
 		}
-	
+
 		//////////////////////////////////////////////////////////
 		// -- SUBTASK 4: FIND MAX TEMPERATURE CHANGE OVERALL -- //
 		//////////////////////////////////////////////////////////
 
 		// JF: Let this step take place in the host and rely on MPI's allreduce instead doing it manually
 		MPI_Allreduce(&my_temperature_change, &global_temperature_change, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-#if 0
-		if(my_rank != MASTER_PROCESS_RANK)
-		{
-			// Send my temperature delta to the master MPI process
-			MPI_Ssend(&my_temperature_change, 1, MPI_DOUBLE, MASTER_PROCESS_RANK, 0, MPI_COMM_WORLD);
-			
-			// Receive the total delta calculated by the MPI process based on all MPI processes delta
-			MPI_Recv(&global_temperature_change, 1, MPI_DOUBLE, MASTER_PROCESS_RANK, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		}
-		else
-		{
-			// Initialise the temperature change to mine
-			global_temperature_change = my_temperature_change;
-
-			// Pick highest temperature change observed
-			for(int j = 0; j < comm_size; j++)
-			{
-				if(j != my_rank)
-				{
-					double subtotal;
-					MPI_Recv(&subtotal, 1, MPI_DOUBLE, j, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-					if(subtotal > global_temperature_change)
-					{
-						global_temperature_change = subtotal;
-					}
-				}
-			}
-
-			// Send delta back to all MPI processes
-			for(int j = 0; j < comm_size; j++)
-			{
-				if(j != my_rank)
-				{
-					MPI_Ssend(&global_temperature_change, 1, MPI_DOUBLE, j, 0, MPI_COMM_WORLD);
-				}
-			}
-		}
-#endif
+	
 		//////////////////////////////////////////////////
 		// -- SUBTASK 5: UPDATE LAST ITERATION ARRAY -- //
 		//////////////////////////////////////////////////
