@@ -121,8 +121,7 @@ int main(int argc, char* argv[])
 	}
 
 	// Copy the temperatures into the current iteration temperature as well
-	// JF: This will be computed in the device, so we need to fetch
-	// some values from the host
+	// JF: This will be computed in the device, so we need to fetch some values from the host
 	#pragma acc update device(temperatures_last)
 	#pragma acc kernels
 	for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
@@ -181,7 +180,7 @@ int main(int argc, char* argv[])
 		/////////////////////////////////////////////
 
 		//JF: Main computation offloaded to device
-		#pragma acc kernels
+		#pragma acc kernels async(1)
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
 			// Process the cell at the first column, which has no left neighbour
@@ -191,6 +190,20 @@ int main(int argc, char* argv[])
 									  temperatures_last[i+1][0] +
 									  temperatures_last[i  ][1]) / 3.0;
 			}
+			// Process the cell at the last column, which has no right neighbour
+			if(temperatures[i][COLUMNS_PER_MPI_PROCESS - 1] != MAX_TEMPERATURE)
+			{
+				temperatures[i][COLUMNS_PER_MPI_PROCESS - 1] = (temperatures_last[i-1][COLUMNS_PER_MPI_PROCESS - 1] +
+															    temperatures_last[i+1][COLUMNS_PER_MPI_PROCESS - 1] +
+															    temperatures_last[i  ][COLUMNS_PER_MPI_PROCESS - 2]) / 3.0;
+			}
+		}
+
+		// JF: Put this calculation in separate loop so the compiler collapses it, additionally it may be 
+		// executed asynchronously with the updates in the first and last column
+		#pragma acc kernels async(2)
+		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
+		{
 			// Process all cells between the first and last columns excluded, which each has both left and right neighbours
 			for(int j = 1; j < COLUMNS_PER_MPI_PROCESS - 1; j++)
 			{
@@ -202,14 +215,10 @@ int main(int argc, char* argv[])
 												 temperatures_last[i  ][j+1]);
 				}
 			}
-			// Process the cell at the last column, which has no right neighbour
-			if(temperatures[i][COLUMNS_PER_MPI_PROCESS - 1] != MAX_TEMPERATURE)
-			{
-				temperatures[i][COLUMNS_PER_MPI_PROCESS - 1] = (temperatures_last[i-1][COLUMNS_PER_MPI_PROCESS - 1] +
-															    temperatures_last[i+1][COLUMNS_PER_MPI_PROCESS - 1] +
-															    temperatures_last[i  ][COLUMNS_PER_MPI_PROCESS - 2]) / 3.0;
-			}
 		}
+
+		// JF: Ensure both queues are done before proceeding
+		#pragma acc wait
 
 		///////////////////////////////////////////////////////
 		// -- SUBTASK 3: CALCULATE MAX TEMPERATURE CHANGE -- //
@@ -217,10 +226,9 @@ int main(int argc, char* argv[])
 
 		//JF: search max temp. change in the device, use reduction explicitly 
 		my_temperature_change = 0.0;
-		#pragma acc parallel loop reduction(max:my_temperature_change)
+		#pragma acc parallel loop collapse(2) reduction(max:my_temperature_change)
 		for(int i = 1; i <= ROWS_PER_MPI_PROCESS; i++)
 		{
-			#pragma acc loop reduction(max:my_temperature_change)
 			for(int j = 0; j < COLUMNS_PER_MPI_PROCESS; j++)
 			{
 				my_temperature_change = fmax(fabs(temperatures[i][j] - temperatures_last[i][j]), my_temperature_change);
@@ -324,7 +332,6 @@ int main(int argc, char* argv[])
 				MPI_Ssend(&temperatures[1][0], ROWS_PER_MPI_PROCESS * COLUMNS_PER_MPI_PROCESS, MPI_DOUBLE, MASTER_PROCESS_RANK, 0, MPI_COMM_WORLD); 
 			}
 		}
-
 		// Calculate the total time spent processing
 		if(my_rank == MASTER_PROCESS_RANK)
 		{
