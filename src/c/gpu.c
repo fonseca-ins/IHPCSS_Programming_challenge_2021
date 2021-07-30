@@ -81,7 +81,8 @@ int main(int argc, char* argv[])
 	// /_______\                             //
 	///////////////////////////////////////////
 
-		
+	#pragma acc set device_num(my_rank)
+        {
 	#pragma acc data create(temperatures, temperatures_last, snapshot)
 	{
 	////////////////////////////////////////////////////////
@@ -317,6 +318,7 @@ int main(int argc, char* argv[])
 	}
 	
 	} // END OF DATA REGION: #pragma acc data create(temperatures, temperatures_last)
+	} // END OF SET DEVICE_NUM region
 
 	MPI_Finalize();
 
